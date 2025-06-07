@@ -1,0 +1,25 @@
+{
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "workingDirectory": "C:\\Users\\azert\\AppData\\Local\\Packages\\0xeeeeeeeeeeee.AudioCopy_f91nmrsqwpk6y\\LocalState\\wwwroot",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "AudioClone_Token": "abcde"
+      },
+      "dotnetRunMessages": true,
+      "applicationUrl": "http://+:23456"
+    },
+    "WSL": {
+      "commandName": "WSL2",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://+:23456",
+        "AudioCopy_AllowInternetPair": "True",
+        "AudioCopy_hostToken": "abcd"
+      },
+      "distributionName": ""
+    }
+  },
+  "$schema": "https://json.schemastore.org/launchsettings.json"
+}
