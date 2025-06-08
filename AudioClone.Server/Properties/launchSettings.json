@@ -8,7 +8,7 @@
         "AudioClone_Token": "abcde"
       },
       "dotnetRunMessages": true,
-      "applicationUrl": "http://+:23456"
+      "applicationUrl": "http://+:23500"
     },
     "WSL": {
       "commandName": "WSL2",

@@ -1,5 +1,4 @@
-using libAudioCopy;
-using libAudioCopy.Audio;
+using AudioClone.CoreCapture;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -23,7 +22,7 @@ public class AudioController : ControllerBase
 
     public AudioController(AudioProvider provider)
     {
-        string? name,format = "";
+        string? name, format = "";
         int id = -1;
         if ((name = Environment.GetEnvironmentVariable("AudioCopy_DefaultDeviceName")) is not null || (format = Environment.GetEnvironmentVariable("AudioCopy_DefaultAudioQuality")) is not null)
         {
@@ -44,13 +43,13 @@ public class AudioController : ControllerBase
             _provider = provider;
         }
 
-        
     }
 
     private bool CheckToken(string? token)
     {
         return (Environment.GetEnvironmentVariable("AudioClone_Token") ?? throw new ArgumentNullException("Please define token.")) == token;
     }
+
 
 
     [HttpPut("SetCaptureOptions")]
@@ -94,54 +93,52 @@ public class AudioController : ControllerBase
         await Response.WriteAsJsonAsync(json, ct);
     }
 
-    //mp3 is useless, we decided to remove it.
+    [HttpGet("mp3")]
+    public async Task StreamMp3(string token, bool force = false, string clientName = "", CancellationToken ct = default)
+    {
+        if (!CheckToken(token))
+        {
+            Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await Response.WriteAsync("Unauthorized, please check your token.");
+            return;
+        }
 
-    //[HttpGet("mp3")]
-    //public async Task StreamMp3(string token, bool force = false, string clientName = "", CancellationToken ct = default)
-    //{
-    //    if (!CheckToken(token))
-    //    {
-    //        Response.StatusCode = StatusCodes.Status401Unauthorized;
-    //        await Response.WriteAsync("Unauthorized, please check your token.");
-    //        return;
-    //    }
+        if (!_provider.isMp3Ready || force)
+        {
+            Response.StatusCode = StatusCodes.Status406NotAcceptable;
+            await Response.WriteAsync("Enable resample or use force=true argument to continue get streamed MP3 audio.");
+            return;
+        }
 
-    //    if (!_provider.isMp3Ready || force)
-    //    {
-    //        Response.StatusCode = StatusCodes.Status406NotAcceptable;
-    //        await Response.WriteAsync("Enable resample or use force=true argument to continue get streamed MP3 audio.");
-    //        return;
-    //    }
+        HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+        Response.ContentType = "audio/mpeg";
 
-    //    HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering(); 
-    //    Response.ContentType = "audio/mpeg";
+        var (id, pipe) = _provider.SubscribePcm((HttpContext.Connection.RemoteIpAddress ?? IPAddress.Any).ToString().Split(':').Last(), clientName);
 
-    //    var (id, pipe) = _provider.SubscribePcm((HttpContext.Connection.RemoteIpAddress ?? IPAddress.Any).ToString().Split(':').Last(),clientName);
+        try
+        {
+            using var mp3Writer = new LameMP3FileWriter(Response.Body, _provider.PcmFormat, 128);
 
-    //    try
-    //    {
-    //        using var mp3Writer = new LameMP3FileWriter(Response.Body, _provider.PcmFormat, 128);
+            var buffer = new byte[_provider.PcmBlockAlign * 16];
+            while (!ct.IsCancellationRequested)
+            {
+                int n = await pipe.ReadAsync(buffer, 0, buffer.Length, ct);
+                if (n <= 0)
+                {
+                    await Task.Delay(20, ct);
+                    continue;
+                }
 
-    //        var buffer = new byte[_provider.PcmBlockAlign * 16]; 
-    //        while (!ct.IsCancellationRequested)
-    //        {
-    //            int n = await pipe.ReadAsync(buffer, 0, buffer.Length, ct);
-    //            if (n <= 0)
-    //            {
-    //                await Task.Delay(20, ct);
-    //                continue;
-    //            }
+                mp3Writer.Write(buffer, 0, n);
 
-    //            mp3Writer.Write(buffer, 0, n);
-
-    //            await Response.Body.FlushAsync(ct);
-    //        }
-    //    }
-    //    finally
-    //    {
-    //        _provider.UnsubscribePcm(id);
-    //    }
-    //}
+                await Response.Body.FlushAsync(ct);
+            }
+        }
+        finally
+        {
+            _provider.UnsubscribePcm(id);
+        }
+    }
 
 
     [HttpGet("wav")]
@@ -155,7 +152,7 @@ public class AudioController : ControllerBase
         }
         HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
         Response.ContentType = "audio/wav";
-        Response.Headers["Accept-Ranges"] = "bytes";  
+        Response.Headers["Accept-Ranges"] = "bytes";
 
         int channels = _provider.PcmFormat.Channels;
         int sampleRate = _provider.PcmFormat.SampleRate;
@@ -182,7 +179,7 @@ public class AudioController : ControllerBase
             var buffer = new byte[_provider.PcmBlockAlign * 16];
             while (!ct.IsCancellationRequested)
             {
-                int n = pipe.Read(buffer, 0, buffer.Length);
+                int n = await pipe.ReadAsync(buffer, 0, buffer.Length, ct);
                 if (n <= 0) { await Task.Delay(20, ct); continue; }
                 await Response.Body.WriteAsync(buffer, 0, n, ct);
                 await Response.Body.FlushAsync(ct);
@@ -210,7 +207,7 @@ public class AudioController : ControllerBase
         {
             var i = new ProcessStartInfo
             {
-                FileName = @"flac.exe",
+                FileName = Path.Combine(Environment.CurrentDirectory,"..","flac.exe"),
                 Arguments = "--best --ogg --force-raw-format --endian=little " +
                              $"--sign=signed --channels={_provider.channels} --bps={_provider.bitRate} --sample-rate={_provider.sampleRate} --stdout -",
                 UseShellExecute = false,
@@ -225,7 +222,7 @@ public class AudioController : ControllerBase
                 var buf = new byte[_provider.PcmBlockAlign * 16];
                 while (!ct.IsCancellationRequested)
                 {
-                    int n = pipe.Read(buf, 0, buf.Length);
+                    int n = await pipe.ReadAsync(buf, 0, buf.Length, ct);
                     if (n > 0) flacProc.StandardInput.BaseStream.Write(buf, 0, n);
                     else await Task.Delay(20, ct);
                 }

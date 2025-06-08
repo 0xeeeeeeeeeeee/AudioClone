@@ -1,5 +1,4 @@
 ﻿using NAudio.CoreAudioApi;
-using NAudio.Utils;
 using NAudio.Wave;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -7,14 +6,14 @@ using System.IO.Pipes;
 using System.Reflection;
 using System.Xml.Linq;
 
-namespace libAudioCopy.Audio
+namespace AudioClone.CoreCapture
 {
 
     public class AudioProvider : IDisposable
     {
         private const int MB = 1024 * 1024;
         private readonly WasapiLoopbackCapture loopbackWaveIn;
-        private readonly CircularBuffer recordingStream;
+        private readonly MyAudioStream recordingStream;
         private readonly IWaveProvider pcmStream;
         private readonly Thread waveThread;
         private bool isRunning = true;
@@ -26,7 +25,7 @@ namespace libAudioCopy.Audio
         public ConcurrentDictionary<Guid, Tuple<string, string>> SubscribedClients = new();
         public ConcurrentQueue<byte>? rawBuffer = null;
 
-        private readonly ConcurrentDictionary<Guid, CircularBuffer> pcmSubscribers = new();
+        private readonly ConcurrentDictionary<Guid, MyAudioStream> pcmSubscribers = new();
 
         public WaveFormat PcmFormat => pcmStream.WaveFormat;
         public int PcmBlockAlign => pcmStream.WaveFormat.BlockAlign;
@@ -35,7 +34,7 @@ namespace libAudioCopy.Audio
 
         public AudioProvider(WaveFormat? targetFormat = null, int deviceId = -1)
         {
-            recordingStream = new CircularBuffer(10 * 1024 * 1024);
+            recordingStream = new MyAudioStream { MaxBufferLength = 10 * MB };
 
             var enumerator = new MMDeviceEnumerator();
             var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
@@ -53,7 +52,7 @@ namespace libAudioCopy.Audio
                 recordingStream.Write(a.Buffer, 0, a.BytesRecorded);
             loopbackWaveIn.StartRecording();
 
-            var floatSrc = new RawSourceWaveStream(new CircularBufferStream(recordingStream), loopbackWaveIn.WaveFormat);
+            var floatSrc = new RawSourceWaveStream(recordingStream, loopbackWaveIn.WaveFormat);
 
             if (targetFormat is null)
             {
@@ -65,7 +64,7 @@ namespace libAudioCopy.Audio
                 pcmStream = resamp;
             }
 
-            isMp3Ready = (pcmStream.WaveFormat.SampleRate <= 48000 && pcmStream.WaveFormat.BitsPerSample == 16);
+            isMp3Ready = pcmStream.WaveFormat.SampleRate <= 48000 && pcmStream.WaveFormat.BitsPerSample == 16;
 
 
             Console.WriteLine($"Listening on{(deviceId >= 0 ? "" : " default")} device {device.FriendlyName} @ {pcmStream.WaveFormat.SampleRate}Hz {pcmStream.WaveFormat.BitsPerSample}bps {pcmStream.WaveFormat.Channels}-channels");
@@ -78,12 +77,12 @@ namespace libAudioCopy.Audio
             waveThread.Start();
         }
 
-        public (Guid id, CircularBuffer stream) SubscribePcm(string ip = "", string name = "")
+        public (Guid id, MyAudioStream stream) SubscribePcm(string ip = "", string name = "")
         {
             var id = Guid.NewGuid();
             ListeningClients.Add($"{name}@{ip}");
             Console.WriteLine($"Client {id} ({name}) @ IPAddress:{ip} subscribed.");
-            var pipe = new CircularBuffer(10 * 1024 * 1024);
+            var pipe = new MyAudioStream { MaxBufferLength = 10 * MB };
             pcmSubscribers[id] = pipe;
             return (id, pipe);
         }
@@ -94,10 +93,10 @@ namespace libAudioCopy.Audio
             if (pcmSubscribers.TryRemove(id, out var pipe))
             {
                 Console.WriteLine($"Client {id} ({(SubscribedClients.TryGetValue(id, out name) ? name : "name unknown")}) unsubscribed.");
-                pipe = null;
+                pipe.Dispose();
             }
             SubscribedClients.Remove(id, out _);
-            ListeningClients = new ConcurrentBag<string>(ListeningClients.TakeWhile((c) => c != $"{name.Item2}@{name.Item1}"));
+            //ListeningClients = new ConcurrentBag<string>(ListeningClients.TakeWhile((c) => c != $"{name.Item2}@{name.Item1}"));
         }
 
         private void WaveProcessor()
@@ -128,49 +127,9 @@ namespace libAudioCopy.Audio
             if (rawBuffer is not null) return;
             loopbackWaveIn.StopRecording();
             loopbackWaveIn.Dispose();
-            //foreach (var kv in pcmSubscribers) kv.Value = null;
-            //recordingStream = null;
-        }
-    }
-
-
-    public class CircularBufferStream : Stream
-    {
-        private readonly CircularBuffer buffer;
-
-        public CircularBufferStream(CircularBuffer buffer)
-        {
-            this.buffer = buffer;
-        }
-
-        public override bool CanRead => true;
-        public override bool CanSeek => false;
-        public override bool CanWrite => false;
-        public override long Length => buffer.Count;
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-
-        public override void Flush() { }
-
-        public override int Read(byte[] buffer, int offset, int count)
-        {
-            return this.buffer.Read(buffer, offset, count);
-        }
-
-        public override long Seek(long offset, SeekOrigin origin)
-        {
-            throw new NotSupportedException();
-        }
-
-        public override void SetLength(long value)
-        {
-            throw new NotSupportedException();
-        }
-
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            throw new NotSupportedException();
+            foreach (var kv in pcmSubscribers) kv.Value.Dispose();
+            recordingStream.Dispose();
         }
     }
 }
-
 
