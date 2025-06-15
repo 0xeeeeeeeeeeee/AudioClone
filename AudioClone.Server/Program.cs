@@ -18,7 +18,7 @@ internal class Program
 {
     private static void Main(string[] args)
     {
-        Thread.Sleep(500);//等待日志采集启动
+        Thread.Sleep(250);//等待日志采集启动
 
         Console.WriteLine($"Current Directory: {Directory.GetCurrentDirectory()}");
 
@@ -91,6 +91,38 @@ internal class Program
         app.MapControllers();
         try
         {
+            var listenMonitorCts = new CancellationTokenSource();
+            _ = Task.Run(async () =>
+            {
+                int belowZeroCount = 0;
+                while (!listenMonitorCts.Token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        long clientCount = AudioClone.CoreCapture.AudioProvider.listenClientsCount;
+                        Console.WriteLine($"{clientCount} clients listening{(clientCount <= 0 ? $" for {belowZeroCount/2} minutes" : "")}.");
+                        if (clientCount <= 0)
+                        {
+                            belowZeroCount++;
+                        }
+                        else
+                        {
+                            belowZeroCount = 0;
+                        }
+                        if (belowZeroCount >= 6)
+                        {
+                            Console.WriteLine("No any connection in 3 minutes, exit.");
+                            Environment.Exit(0);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"An {ex.GetType().Name} happens:{ex.Message}");
+                    }
+                    await Task.Delay(TimeSpan.FromMinutes(0.5), listenMonitorCts.Token);
+                }
+            }, listenMonitorCts.Token);
+            
             app.Run();
 
         }

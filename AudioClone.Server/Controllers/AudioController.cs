@@ -47,7 +47,14 @@ public class AudioController : ControllerBase
 
     private bool CheckToken(string? token)
     {
-        return (Environment.GetEnvironmentVariable("AudioClone_Token") ?? throw new ArgumentNullException("Please define token.")) == token;
+        Console.WriteLine("!Token");
+        Thread.Sleep(50);
+        var tk = (Console.ReadLine() ?? throw new ArgumentNullException()).Trim();
+        Console.WriteLine($"Token is: {token.Trim()} length:{token.Trim().Length}");
+        Console.WriteLine($"User's token is: {tk} length:{tk.Length}");
+        Console.WriteLine($"Compare: {token.Trim() == tk}");
+
+        return token.Trim() == tk;
     }
 
 

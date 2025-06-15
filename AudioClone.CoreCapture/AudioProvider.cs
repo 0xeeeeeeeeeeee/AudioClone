@@ -30,7 +30,11 @@ namespace AudioClone.CoreCapture
         public WaveFormat PcmFormat => pcmStream.WaveFormat;
         public int PcmBlockAlign => pcmStream.WaveFormat.BlockAlign;
 
-        public static ConcurrentBag<string> ListeningClients = new();
+        public static ConcurrentBag<Guid> ListeningClients = new();
+
+        public static long listenClientsCount => ListeningClients.Count;
+
+        static object locker = new();
 
         public AudioProvider(WaveFormat? targetFormat = null, int deviceId = -1)
         {
@@ -79,24 +83,41 @@ namespace AudioClone.CoreCapture
 
         public (Guid id, MyAudioStream stream) SubscribePcm(string ip = "", string name = "")
         {
-            var id = Guid.NewGuid();
-            ListeningClients.Add($"{name}@{ip}");
-            Console.WriteLine($"Client {id} ({name}) @ IPAddress:{ip} subscribed.");
-            var pipe = new MyAudioStream { MaxBufferLength = 10 * MB };
-            pcmSubscribers[id] = pipe;
-            return (id, pipe);
+            lock (locker)
+            {
+                var id = Guid.NewGuid();
+                ListeningClients.Add(id);
+                var pipe = new MyAudioStream { MaxBufferLength = 10 * MB };
+                pcmSubscribers[id] = pipe;
+                Console.WriteLine($"Client {id} ({name}) @ IPAddress:{ip} subscribed, now {listenClientsCount} listening.");
+                return (id, pipe);
+            }
+
         }
 
         public void UnsubscribePcm(Guid id)
         {
-            Tuple<string, string> name = new("", "");
-            if (pcmSubscribers.TryRemove(id, out var pipe))
+            lock (locker)
             {
-                Console.WriteLine($"Client {id} ({(SubscribedClients.TryGetValue(id, out name) ? name : "name unknown")}) unsubscribed.");
-                pipe.Dispose();
+                Tuple<string, string> name = new("", "");
+                if (pcmSubscribers.TryRemove(id, out var pipe))
+                {
+                    pipe.Dispose();
+                }
+                SubscribedClients.Remove(id, out _);
+                try
+                {
+                    ListeningClients = [.. ListeningClients.TakeWhile((c) => c != id)];
+                }
+                catch
+                {
+
+                }
+                finally
+                {
+                    Console.WriteLine($"Client {id} unsubscribed, now {listenClientsCount} listening.");
+                }
             }
-            SubscribedClients.Remove(id, out _);
-            //ListeningClients = new ConcurrentBag<string>(ListeningClients.TakeWhile((c) => c != $"{name.Item2}@{name.Item1}"));
         }
 
         private void WaveProcessor()
