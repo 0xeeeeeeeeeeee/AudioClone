@@ -2,13 +2,13 @@
 using NAudio.Wave;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipes;
 using System.Reflection;
 using System.Xml.Linq;
 
 namespace AudioClone.CoreCapture
 {
-
     public class AudioProvider : IDisposable
     {
         private const int MB = 1024 * 1024;
@@ -36,6 +36,19 @@ namespace AudioClone.CoreCapture
 
         static object locker = new();
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="AudioProvider"/> class, which captures audio from a specified
+        /// device or the default audio endpoint.
+        /// </summary>
+        /// <remarks>This constructor sets up audio capture using WASAPI loopback. If a specific device ID
+        /// is provided, the corresponding device is used; otherwise, the default multimedia audio endpoint is selected.
+        /// The captured audio is processed and optionally resampled to the specified <paramref
+        /// name="targetFormat"/>.</remarks>
+        /// <param name="targetFormat">The desired target audio format for the captured audio. If <see langword="null"/>, the audio will be
+        /// keep origin format, but converted to 16-bit PCM format.</param>
+        /// <param name="deviceId">The ID of the audio device to capture from. If set to <see langword="-1"/>, the default audio endpoint is used. Must be within
+        /// the range of available devices.</param>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown if <paramref name="deviceId"/> is greater than or equal to the number of available audio devices.</exception>
         public AudioProvider(WaveFormat? targetFormat = null, int deviceId = -1)
         {
             recordingStream = new MyAudioStream { MaxBufferLength = 10 * MB };

@@ -10,6 +10,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -18,13 +19,7 @@ internal class Program
 {
     private static void Main(string[] args)
     {
-        Thread.Sleep(250);//等待日志采集启动
-
-        Console.WriteLine($"Current Directory: {Directory.GetCurrentDirectory()}");
-
-        //foreach (DictionaryEntry de in Environment.GetEnvironmentVariables())
-        //    if((de.Key.ToString() ?? "").StartsWith("ASPNET") ||(de.Key.ToString() ?? "").StartsWith("AudioCopy")) Console.WriteLine($"{de.Key} : {de.Value}");
-
+        Thread.Sleep(250); //等待日志采集启动
 
         var builder = WebApplication.CreateBuilder(args);
         builder.Logging.ClearProviders();
@@ -36,12 +31,7 @@ internal class Program
         builder.Logging.AddFilter("Microsoft.AspNetCore.Mvc.StatusCodeResult", LogLevel.Information);
 
 
-
-        PrintLocalNetworkAddresses();
-
-
         builder.Services.AddSingleton<AudioProvider>();
-        builder.Services.AddSingleton<ConcurrentDictionary<string, string>>(); //懒
 
 
         builder.Services.AddControllers();
@@ -66,18 +56,10 @@ internal class Program
                     if (contextFeature != null)
                     {
                         var ex = contextFeature.Error;
-                        var errorInfo = new
-                        {
-                            Type = ex.GetType().FullName,
-                            Message = ex.Message,
-                            StackTrace = ex.StackTrace,
-                            InnerException = ex.InnerException?.Message
-                        };
-                        string json = JsonSerializer.Serialize(errorInfo, new JsonSerializerOptions { WriteIndented = false });
-                        Console.Error.WriteLine("ERROR!" + json);
+                        Console.Error.WriteLine(LogException(ex));
                         context.Response.StatusCode = 500;
                         context.Response.ContentType = "text/plain";
-                        await context.Response.WriteAsync($"A {contextFeature.Error.GetType().Name} exception happens: {contextFeature.Error.Message}");
+                        await context.Response.WriteAsync($"A {contextFeature.Error.GetType().Name} exception happens: {contextFeature.Error.Message}. For additional information, check the log.");
                     }
                 });
             });
@@ -94,20 +76,26 @@ internal class Program
             var listenMonitorCts = new CancellationTokenSource();
             _ = Task.Run(async () =>
             {
+                Stopwatch sw = Stopwatch.StartNew();
                 int belowZeroCount = 0;
                 while (!listenMonitorCts.Token.IsCancellationRequested)
                 {
                     try
                     {
-                        long clientCount = AudioClone.CoreCapture.AudioProvider.listenClientsCount;
-                        Console.WriteLine($"{clientCount} clients listening{(clientCount <= 0 ? $" for {belowZeroCount/2} minutes" : "")}.");
+                        long clientCount = AudioProvider.listenClientsCount;
                         if (clientCount <= 0)
                         {
                             belowZeroCount++;
+                            Console.WriteLine($"no clients listening for {belowZeroCount / 2} minutes");
                         }
                         else
                         {
                             belowZeroCount = 0;
+                            if(sw.Elapsed.TotalMinutes > 3)
+                            {
+                                Console.WriteLine($"{clientCount} clients listening.");
+                                sw.Restart();
+                            }
                         }
                         if (belowZeroCount >= 6)
                         {
@@ -128,52 +116,42 @@ internal class Program
         }
         catch (Exception ex)
         {
-            var errorInfo = new
-            {
-                Type = ex.GetType().FullName,
-                Message = ex.Message,
-                StackTrace = ex.StackTrace,
-                InnerException = ex.InnerException?.Message
-            };
-            string json = JsonSerializer.Serialize(errorInfo, new JsonSerializerOptions { WriteIndented = false });
-            Console.Error.WriteLine("ERROR!" + json);
+            Console.Error.WriteLine(LogException(ex));
         }
     }
 
-    public class BackendExceptionObject
-    {
-        public string Type { get; set; }
-        public string Message { get; set; }
-        public string StackTrace { get; set; }
-        public string InnerException { get; set; }
-    }
 
-    private static bool IsLocalNetwork(string ipAddress)
-    {
-        return ipAddress.StartsWith("192.168.") || ipAddress.StartsWith("10.") ||
-               (ipAddress.StartsWith("172.") && int.TryParse(ipAddress.Split('.')[1], out int secondOctet) && secondOctet >= 16 && secondOctet <= 31);
-    }
-    private static void PrintLocalNetworkAddresses()
-    {
-        var interfaces = NetworkInterface.GetAllNetworkInterfaces();
 
-        foreach (var networkInterface in interfaces)
+    public static string LogException(Exception ex)
+    {
+        string innerExceptionInfo = "None";
+        if (ex.InnerException != null)
         {
-            if (networkInterface.OperationalStatus == OperationalStatus.Up &&
-                networkInterface.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
-                !networkInterface.Description.Contains("Vmware", StringComparison.OrdinalIgnoreCase) &&
-                !networkInterface.Description.Contains("VirtualBox", StringComparison.OrdinalIgnoreCase))
-            {
-                var ipProperties = networkInterface.GetIPProperties();
-                foreach (var ipAddress in ipProperties.UnicastAddresses)
-                {
-                    if (ipAddress.Address.AddressFamily == AddressFamily.InterNetwork &&
-                        IsLocalNetwork(ipAddress.Address.ToString()))
-                    {
-                        Console.WriteLine($"Interface: {networkInterface.Name}, IP:{ipAddress.Address}");
-                    }
-                }
-            }
+            innerExceptionInfo =
+$"""
+Type: {ex.InnerException.GetType().Name}                        
+Message: {ex.InnerException.Message}
+StackTrace:
+{ex.InnerException.StackTrace}
+
+""";
         }
+        return
+$"""
+Exception type: {ex.GetType().Name}
+Message: {ex.Message}
+StackTrace:
+{ex.StackTrace}
+                            
+From:{(ex.TargetSite is not null ? ex.TargetSite.ToString() : "unknown")}
+InnerException:
+{innerExceptionInfo}
+                            
+Exception data:
+{string.Join("\r\n", ex.Data.Cast<System.Collections.DictionaryEntry>().Select(k => $"{k.Key} : {k.Value}"))}
+                            
+""";
+            
     }
+
 }

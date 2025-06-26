@@ -22,38 +22,38 @@ public class AudioController : ControllerBase
 
     public AudioController(AudioProvider provider)
     {
-        string? name, format = "";
-        int id = -1;
-        if ((name = Environment.GetEnvironmentVariable("AudioCopy_DefaultDeviceName")) is not null || (format = Environment.GetEnvironmentVariable("AudioCopy_DefaultAudioQuality")) is not null)
+        string format = "";
+        if ((format = Environment.GetEnvironmentVariable("AudioCopy_DefaultAudioQuality")) is not null && !string.IsNullOrWhiteSpace(format))
         {
-            var enumerator = new MMDeviceEnumerator();
-            var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
-            IEnumerable<string> clients = devices.Select((d) => $"{d.DeviceFriendlyName}");
-            id = Array.IndexOf(clients.ToArray(), name);
-
+            Console.WriteLine($"User override audio quality to: {format}");
             string[]? fmtArr = (format is not null && !string.IsNullOrWhiteSpace(format)) ? format.Split(',') : Array.Empty<string>();
 
-            _provider = new(
-                (fmtArr.Length == 3) ? new WaveFormat(int.Parse(fmtArr[0]), int.Parse(fmtArr[1]), int.Parse(fmtArr[2])) : null,
-                id);
-
+            if (fmtArr.Length == 3 && fmtArr.All(item => int.TryParse(item, out int value) && value > 0))
+            {
+                _provider = new(
+                    new WaveFormat(int.Parse(fmtArr[0]), int.Parse(fmtArr[1]), int.Parse(fmtArr[2])),
+                    -1);
+            }
+            else
+            {
+                throw new ArgumentException("Invalid audio format. Ensure all values are positive integers.");
+            }
         }
         else
         {
             _provider = provider;
-        }
+            Console.WriteLine($"User not override audio quality, use default");
 
+        }
     }
 
-    private bool CheckToken(string? token)
+    private bool CheckToken(string token)
     {
+        if (string.IsNullOrWhiteSpace(token)) throw new ArgumentNullException("token", "Provide token.");
         Console.WriteLine("!Token");
         Thread.Sleep(50);
         var tk = (Console.ReadLine() ?? throw new ArgumentNullException()).Trim();
-        Console.WriteLine($"Token is: {token.Trim()} length:{token.Trim().Length}");
-        Console.WriteLine($"User's token is: {tk} length:{tk.Length}");
-        Console.WriteLine($"Compare: {token.Trim() == tk}");
-
+        Console.WriteLine($"Token {(token.Trim() == tk ? "is equals" : $"{tk} is not equals")} to user's token {token}");
         return token.Trim() == tk;
     }
 
@@ -167,6 +167,7 @@ public class AudioController : ControllerBase
         int byteRate = sampleRate * channels * bitsSample / 8;
         short blockAlign = (short)(channels * bitsSample / 8);
 
+        //wav header
         await Response.Body.WriteAsync(Encoding.ASCII.GetBytes("RIFF"), ct);
         await Response.Body.WriteAsync(BitConverter.GetBytes(uint.MaxValue), ct);
         await Response.Body.WriteAsync(Encoding.ASCII.GetBytes("WAVEfmt "), ct);
@@ -209,7 +210,7 @@ public class AudioController : ControllerBase
         Response.ContentType = "audio/ogg";
 
         var (id, pipe) = _provider.SubscribePcm((HttpContext.Connection.RemoteIpAddress ?? IPAddress.Any).ToString().Split(':').Last(), clientName);
-        Process flacProc = null;
+        Process? flacProc = null;
         try
         {
             var i = new ProcessStartInfo
@@ -275,7 +276,6 @@ public class AudioController : ControllerBase
                 n = pipe.Read(buffer, 0, buffer.Length);
                 if (n > 0)
                 {
-                    //Console.WriteLine(result);
                     await Response.Body.WriteAsync(buffer.AsMemory(0, n), ct);
                 }
                 else

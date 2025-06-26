@@ -6,8 +6,9 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<RootNamespace>libAudioCopy_Backend</RootNamespace>
 		<OutputType>Exe</OutputType>
-		<AssemblyVersion>1.0.2.0</AssemblyVersion>
-		<FileVersion>1.0.2.0</FileVersion>
+		<AssemblyVersion>1.2.0.1</AssemblyVersion>
+		<FileVersion>1.2.0.1</FileVersion>
+		<Version>1.2.0.1</Version>
 		<Authors>0xeeeeeeeeeeee</Authors>
 		<Company>0xeeeeeeeeeeee</Company>
 		<Product>Project AudioClone</Product>
